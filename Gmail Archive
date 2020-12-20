@@ -1,0 +1,35 @@
+function archive_email_singlefile() {
+  var archive_year=2009 // year of email to archive
+  var query = 'after:1/1/' + archive_year + ' before:1/1/' + (archive_year+1) + ' in:anywhere';
+  var startIndex = 0;
+  var MsgAtts = "";
+  var totMsgs = 0;
+
+  Logger.log(query);
+
+  var content = "";
+
+  do {
+    var threads = GmailApp.search(query, startIndex, 500); // Max Threads is 500
+    Logger.log ('New search index: ' + startIndex)
+    var messages = GmailApp.getMessagesForThreads(threads);
+    for (var i = 0 ; i < messages.length; i++) {
+      for (var j = 0; j < messages[i].length; j++) {
+        totMsgs ++;
+        MsgAtts = "";
+        var attachments = messages[i][j].getAttachments();
+        for (var k = 0; k < attachments.length; k++) {
+          MsgAtts = MsgAtts + ", " + attachments[k].getName();
+        }
+        content = content + "\n\n\n///////////////////////////////////////////////////////////////////////////////////////////////////////////\n\nDate: " + messages[i][j].getDate() + "\nFrom: " + messages[i][j].getFrom() + "\nTo: " + messages[i][j].getTo() + "\nCc: " + messages[i][j].getCc() + "\nSubject: " + messages[i][j].getSubject() + "\nAttachments: " + MsgAtts + "\n\n" + messages[i][j].getPlainBody();
+      }
+    }
+    startIndex += 500; // increment start index to the next 500 threads
+    Logger.log('Content used: ' + (100*content.length/67108864) + ' %.');
+  } while (threads.length == 500); // while still less than the max thread number
+
+  newFile = DriveApp.createFile(archive_year + " GMail archive.txt",content);
+
+  Logger.log (totMsgs + " messages archived.")
+
+}

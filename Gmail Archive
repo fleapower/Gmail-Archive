@@ -1,35 +1,134 @@
 function archive_email_singlefile() {
-  var archive_year=2009 // year of email to archive
-  var query = 'after:1/1/' + archive_year + ' before:1/1/' + (archive_year+1) + ' in:anywhere';
+
+  var archive_label=2009 // year of email to archive
+  var onePass = 50; // 50 emails at a time are archived; change this if the script is getting excessive timeout errors
+  
+  var currUserEmail = Session.getEffectiveUser().getEmail(); // for the notification email
+  var query = 'after:1/1/' + archive_label + ' before:1/1/' + (archive_label+1) + ' in:anywhere';
+  var folderName = "GmailAttachments_" + archive_label
+  var archiveFile = "GmailArchive_" + archive_label + ".txt"
   var startIndex = 0;
   var MsgAtts = "";
   var totMsgs = 0;
 
-  Logger.log(query);
+  console.log(query);
 
   var content = "";
 
-  do {
-    var threads = GmailApp.search(query, startIndex, 500); // Max Threads is 500
-    Logger.log ('New search index: ' + startIndex)
-    var messages = GmailApp.getMessagesForThreads(threads);
-    for (var i = 0 ; i < messages.length; i++) {
-      for (var j = 0; j < messages[i].length; j++) {
-        totMsgs ++;
-        MsgAtts = "";
-        var attachments = messages[i][j].getAttachments();
-        for (var k = 0; k < attachments.length; k++) {
-          MsgAtts = MsgAtts + ", " + attachments[k].getName();
-        }
-        content = content + "\n\n\n///////////////////////////////////////////////////////////////////////////////////////////////////////////\n\nDate: " + messages[i][j].getDate() + "\nFrom: " + messages[i][j].getFrom() + "\nTo: " + messages[i][j].getTo() + "\nCc: " + messages[i][j].getCc() + "\nSubject: " + messages[i][j].getSubject() + "\nAttachments: " + MsgAtts + "\n\n" + messages[i][j].getPlainBody();
-      }
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var data = scriptProperties.getProperties();
+  for (var key in data) {
+    Logger.log('Key: %s, Value: %s', key, data[key]);
+    if(key=='startIndex'){
+      startIndex = data[key];
     }
-    startIndex += 500; // increment start index to the next 500 threads
-    Logger.log('Content used: ' + (100*content.length/67108864) + ' %.');
-  } while (threads.length == 500); // while still less than the max thread number
+  }
 
-  newFile = DriveApp.createFile(archive_year + " GMail archive.txt",content);
+  startIndex=Number(startIndex)
+
+  var threads = GmailApp.search(query, startIndex, onePass); // Max Threads is onePass
+  var messages = GmailApp.getMessagesForThreads(threads);
+  var parentFolder;
+  if(threads.length > 0){
+    parentFolder = getFolder_(folderName);
+  }
+  var root = DriveApp.getRootFolder();
+  for (var i = 0 ; i < messages.length; i++) {
+    for (var j = 0; j < messages[i].length; j++) {
+      totMsgs ++;
+      MsgAtts = "";
+      var attachments = messages[i][j].getAttachments();
+      for(var k in attachments){
+        var attachment = attachments[k];
+        var attachmentBlob = attachment.copyBlob();
+        var file = DriveApp.createFile(attachmentBlob);
+        parentFolder.addFile(file);
+        root.removeFile(file);
+      }
+      for (var k = 0; k < attachments.length; k++) {
+        MsgAtts = MsgAtts + "'" + attachments[k].getName() + "' ";
+      }
+      content = content + "\n\n\n///////////////////////////////////////////////////////////////////////////////////////////////////////////\n\nDate: " + messages[i][j].getDate() + "\nFrom: " + messages[i][j].getFrom() + "\nTo: " + messages[i][j].getTo() + "\nCc: " + messages[i][j].getCc() + "\nSubject: " + messages[i][j].getSubject() + "\nAttachments: " + MsgAtts + "\n\n" + messages[i][j].getPlainBody();
+    }
+  }
+  Logger.log('Content used: ' + (100*content.length/67108864) + ' %.');
+
+  if(startIndex==0){
+    newFile = DriveApp.createFile(archiveFile,content);
+  }
+  else {
+    var archFiles = DriveApp.getFilesByName(archiveFile);
+    var archFile = archFiles.next();
+    var combinedContent = archFile.getBlob().getDataAsString() + content;
+    archFile.setContent(combinedContent);
+  }
+
+  scriptProperties.setProperties({
+    'startIndex':startIndex+onePass
+  });
 
   Logger.log (totMsgs + " messages archived.")
 
+  // delete triggers
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    ScriptApp.deleteTrigger(triggers[i]);
+  }
+
+  // set new trigger if necessary
+  if (threads.length==onePass){
+      ScriptApp.newTrigger("archive_email_singlefile")
+      .timeBased()
+      .after(15 * 1000) // run the script again in 15 seconds
+      .create();
+    }
+  else {
+      var totalIndexed = startIndex + threads.length;
+      Logger.log(totalIndexed + " threads archived.")
+      // reset startIndex
+      scriptProperties.setProperties({
+        'startIndex':0
+      });
+      // send notification email
+      MailApp.sendEmail(currUserEmail,"Gmail Archive " + archive_label,totalIndexed + " email threads for the year "+ archive_label +" have been archived along with their attachments.  Look in your Google Drive root director for a folder entitled 'GmailAttachments " +archive_label+ "' and for " + archiveFile +".");
+    }
+
+
+}
+
+function getFolder_(folderName){
+  var folder;
+  var fi = DriveApp.getFoldersByName(folderName);
+  if(fi.hasNext()){
+    folder = fi.next();
+  }
+  else{
+    folder = DriveApp.createFolder(folderName);
+  }
+  return folder;
+}
+
+function resetStartIndex(){
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var data = scriptProperties.getProperties();
+  Logger.log("Before reset.")
+  for (var key in data) {
+    Logger.log('Key: %s, Value: %s', key, data[key]);
+  }
+  scriptProperties.setProperties({
+    'startIndex':0
+  });
+  Logger.log("After reset.")
+  var data = scriptProperties.getProperties();
+  for (var key in data) {
+    Logger.log('Key: %s, Value: %s', key, data[key]);
+  }
+}
+
+function showStartIndex(){
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var data = scriptProperties.getProperties();
+  for (var key in data) {
+    Logger.log('Key: %s, Value: %s', key, data[key]);
+  }
 }
